@@ -145,6 +145,14 @@
     font-size: 0.85rem;
   }
   .student-row .name{ flex:1; font-weight:500; }
+  .pref-select{
+    font-size: 0.72rem;
+    padding: 4px 6px;
+    border-radius: 20px;
+    border: 1px solid #d8d0ba;
+    background: #fff;
+    color: var(--ink-soft);
+  }
   .tag{
     font-size: 0.7rem;
     font-weight: 700;
@@ -280,11 +288,50 @@
   .dot{ width:9px; height:9px; border-radius:2px; display:inline-block; }
 
   @media print{
-    .panel, .controls, .legend, .app-header p{ display:none !important; }
+    .panel, .controls, .legend, .app-header p, #bannerArea{ display:none !important; }
     .layout{ grid-template-columns: 1fr; }
     .app-header{ padding: 10px 16px; border-bottom: 3px solid var(--wood); }
     .app-header h1{ font-size:1.3rem; }
     body{ background:#fff; }
+    .seat.conflict{ background: var(--paper); color: var(--ink); }
+  }
+
+  .pw-overlay{
+    position: fixed;
+    inset: 0;
+    background: rgba(44,42,36,0.45);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index: 1000;
+  }
+  .pw-box{
+    background:#fff;
+    border-radius: 10px;
+    padding: 22px;
+    width: 260px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  }
+  .pw-title{
+    font-family:'Gaegu', sans-serif;
+    font-size: 1.05rem;
+    color: var(--board);
+    margin-bottom: 10px;
+  }
+  .pw-box input[type=password]{
+    width:100%;
+    font-family:'Noto Sans KR', sans-serif;
+    font-size: 0.88rem;
+    padding: 9px 10px;
+    border: 1px solid #d8d0ba;
+    border-radius: 7px;
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .pw-error{
+    color: var(--warn);
+    font-size: 0.78rem;
+    margin-top: 6px;
   }
 </style>
 </head>
@@ -292,7 +339,7 @@
 
 <div class="app-header">
   <h1>자리배치 도우미</h1>
-  <p>32명 · 4줄 4열 · 2인 짝 배치 — 선호와 기피 조건을 반영해 무작위로 배치합니다</p>
+  <p>32명 · 4줄 4열 · 2인 짝 배치</p>
 </div>
 
 <div class="layout">
@@ -325,7 +372,8 @@
     </div>
 
     <h2>짝 기피 설정</h2>
-    <div class="card">
+    <button class="btn-ghost" style="width:100%; margin-bottom:12px;" onclick="toggleForbiddenPanel()" id="forbidToggleBtn">🔒 눌러서 확인하기 (교사 전용)</button>
+    <div class="card" id="forbiddenPanel" style="display:none;">
       <div class="row-inline">
         <select id="forbid1"></select>
         <select id="forbid2"></select>
@@ -359,6 +407,18 @@
       <span><span class="dot" style="background:var(--corridor)"></span>뒷자리 선호 학생</span>
       <span><span class="dot" style="background:var(--warn)"></span>기피 조건이 충돌한 자리</span>
       <span>💡 자리 두 곳을 순서대로 클릭하면 서로 자리를 바꿀 수 있어요</span>
+    </div>
+  </div>
+</div>
+
+<div id="pwOverlay" class="pw-overlay" style="display:none;">
+  <div class="pw-box">
+    <div class="pw-title">교사 비밀번호 확인</div>
+    <input type="password" id="pwInput" placeholder="비밀번호를 입력하세요">
+    <div class="pw-error" id="pwError" style="display:none;">비밀번호가 올바르지 않습니다.</div>
+    <div class="row-inline" style="margin-top:10px;">
+      <button class="btn-ghost" style="flex:1" onclick="closePwModal()">취소</button>
+      <button class="btn-primary" style="flex:1" onclick="submitPwModal()">확인</button>
     </div>
   </div>
 </div>
@@ -442,6 +502,11 @@ function removeStudent(id){
   renderSeatGrid();
 }
 
+function updateStudentPref(id, pref){
+  const student = students.find(s => s.id === id);
+  if(student){ student.pref = pref; }
+}
+
 function renderStudentList(){
   const list = document.getElementById('studentList');
   if(students.length === 0){
@@ -450,9 +515,11 @@ function renderStudentList(){
     list.innerHTML = students.map(s => `
       <div class="student-row">
         <span class="name">${escapeHtml(s.name)}</span>
-        <span class="tag ${s.pref==='front'?'tag-front':s.pref==='back'?'tag-back':'tag-none'}">
-          ${s.pref==='front' ? '앞자리' : s.pref==='back' ? '뒷자리' : ''}
-        </span>
+        <select class="pref-select" onchange="updateStudentPref(${s.id}, this.value)">
+          <option value="none" ${s.pref==='none'?'selected':''}>선호 없음</option>
+          <option value="front" ${s.pref==='front'?'selected':''}>앞자리 선호</option>
+          <option value="back" ${s.pref==='back'?'selected':''}>뒷자리 선호</option>
+        </select>
         <button class="x-btn" onclick="removeStudent(${s.id})">✕</button>
       </div>
     `).join('');
@@ -464,6 +531,47 @@ function renderForbiddenSelects(){
   const opts = students.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
   document.getElementById('forbid1').innerHTML = opts || '<option value="">학생 없음</option>';
   document.getElementById('forbid2').innerHTML = opts || '<option value="">학생 없음</option>';
+}
+
+const FORBID_PASSWORD = '1234';
+
+function toggleForbiddenPanel(){
+  const panel = document.getElementById('forbiddenPanel');
+  const isHidden = panel.style.display === 'none';
+
+  if(isHidden){
+    openPwModal();
+  } else {
+    panel.style.display = 'none';
+    document.getElementById('forbidToggleBtn').textContent = '🔒 눌러서 확인하기 (교사 전용)';
+  }
+}
+
+function openPwModal(){
+  const overlay = document.getElementById('pwOverlay');
+  const input = document.getElementById('pwInput');
+  document.getElementById('pwError').style.display = 'none';
+  input.value = '';
+  overlay.style.display = 'flex';
+  setTimeout(() => input.focus(), 0);
+  input.onkeydown = (e) => { if(e.key === 'Enter'){ submitPwModal(); } };
+}
+
+function closePwModal(){
+  document.getElementById('pwOverlay').style.display = 'none';
+}
+
+function submitPwModal(){
+  const input = document.getElementById('pwInput');
+  if(input.value === FORBID_PASSWORD){
+    closePwModal();
+    document.getElementById('forbiddenPanel').style.display = 'block';
+    document.getElementById('forbidToggleBtn').textContent = '🔒 숨기기';
+  } else {
+    document.getElementById('pwError').style.display = 'block';
+    input.value = '';
+    input.focus();
+  }
 }
 
 function addForbiddenPair(){
