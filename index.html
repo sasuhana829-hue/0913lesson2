@@ -287,15 +287,49 @@
   .dot{ width:9px; height:9px; border-radius:2px; display:inline-block; }
 
   @media print{
-    .panel, .controls, .legend, .app-header p, #bannerArea{ display:none !important; }
+    @page{ size: landscape; }
+    .panel, .controls, .legend, .app-header, #bannerArea{ display:none !important; }
     .layout{ grid-template-columns: 1fr; }
-    .app-header{ padding: 10px 16px; border-bottom: 3px solid var(--wood); }
-    .app-header h1{ font-size:1.3rem; }
     body{ background:#fff; }
     .seat.conflict{ background: var(--paper); color: var(--ink); }
     .print-only{ display:block !important; }
+    .room{ max-width: 560px; }
+    .stage{ padding: 18px 24px; }
   }
   .print-only{ display:none; }
+  .class-inputs{
+    display:inline-flex;
+    align-items:center;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    margin-left: 6px;
+  }
+  .class-inputs input{
+    width: 44px;
+    font-family:'Noto Sans KR', sans-serif;
+    font-size: 0.85rem;
+    padding: 6px 6px;
+    border: 1px solid #d8d0ba;
+    border-radius: 7px;
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .print-title{
+    text-align:center;
+    font-family:'Gaegu', sans-serif;
+    font-weight:700;
+    font-size: 1.7rem;
+    margin: 4px 0 18px;
+    color: #111;
+  }
+  .room-print-wrap{
+    display:flex;
+    gap: 28px;
+    align-items:flex-start;
+    justify-content:center;
+  }
+  .roster-panel{ width: 260px; flex-shrink:0; }
   .roster-table{
     width:100%;
     border-collapse: collapse;
@@ -303,18 +337,18 @@
     margin-top: 8px;
   }
   .roster-table th, .roster-table td{
-    border: 1px solid #ccc2a8;
+    border: 1px solid #999;
     padding: 5px 8px;
-    text-align: left;
+    text-align: center;
   }
-  .roster-table th{
-    background: var(--paper-line);
-  }
-  .roster-title{
+  .roster-table td:nth-child(3){ text-align:left; }
+  .roster-table thead tr:first-child th{
+    background: #eee;
+    font-size: 0.95rem;
     font-family:'Gaegu', sans-serif;
-    font-size: 1.1rem;
-    color: var(--board);
-    margin: 26px 0 6px;
+  }
+  .roster-table thead tr:last-child th{
+    background: var(--paper-line);
   }
 
   .pw-overlay{
@@ -409,26 +443,36 @@
       <button class="btn-primary" onclick="randomizeSeats()">🎲 무작위 자리 배치</button>
       <button class="btn-wood" onclick="toggleMode()" id="modeBtn">🖥 학생 이동용 화면 보기</button>
       <button class="btn-ghost" onclick="printChart()">🖨 교탁용 자리표 인쇄</button>
+      <span class="class-inputs">
+        <input type="number" id="gradeInput" value="1" min="1" max="6" title="학년"> 학년
+        <input type="number" id="classInput" value="5" min="1" max="20" title="반"> 반
+      </span>
     </div>
 
     <div id="bannerArea"></div>
 
-    <div class="room">
-      <div id="podiumTop" class="podium">교 탁</div>
-      <div class="grid-wrap">
-        <div class="side-label" id="leftLabel"></div>
-        <div class="seat-grid" id="seatGrid"></div>
-        <div class="side-label" id="rightLabel"></div>
-      </div>
-      <div id="podiumBottom" class="podium" style="display:none;">교 탁</div>
-    </div>
+    <div class="print-only print-title" id="printTitle"></div>
 
-    <div class="print-only">
-      <div class="roster-title">학생 명렬표</div>
-      <table class="roster-table">
-        <thead><tr><th style="width:80px;">번호</th><th>이름</th><th>배정 좌석</th></tr></thead>
-        <tbody id="rosterBody"></tbody>
-      </table>
+    <div class="room-print-wrap">
+      <div class="room">
+        <div id="podiumTop" class="podium">교 탁</div>
+        <div class="grid-wrap">
+          <div class="side-label" id="leftLabel"></div>
+          <div class="seat-grid" id="seatGrid"></div>
+          <div class="side-label" id="rightLabel"></div>
+        </div>
+        <div id="podiumBottom" class="podium" style="display:none;">교 탁</div>
+      </div>
+
+      <div class="print-only roster-panel">
+        <table class="roster-table">
+          <thead>
+            <tr><th colspan="3" id="rosterHeadTitle">학급명단</th></tr>
+            <tr><th>반</th><th>번호</th><th>이름</th></tr>
+          </thead>
+          <tbody id="rosterBody"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="legend">
@@ -840,12 +884,15 @@ function findSeatOf(studentId){
 }
 
 function renderRoster(){
+  const grade = document.getElementById('gradeInput').value || '1';
+  const cls = document.getElementById('classInput').value || '1';
+  document.getElementById('printTitle').innerHTML = `☺ &nbsp;${grade}학년 ${cls}반 자리배치표&nbsp; ☺`;
+  document.getElementById('rosterHeadTitle').textContent = `${grade}학년 ${cls}반`;
+
   const body = document.getElementById('rosterBody');
   const sorted = students.slice().sort((a,b) => a.id - b.id);
-  body.innerHTML = sorted.map(s => {
-    const pos = findSeatOf(s.id);
-    const seatText = pos ? `앞에서 ${pos.r+1}번째 줄 · 창가에서 ${pos.c+1}번째 자리` : '미배정';
-    return `<tr><td>${s.id}</td><td>${escapeHtml(s.name)}</td><td>${seatText}</td></tr>`;
+  body.innerHTML = sorted.map((s, i) => {
+    return `<tr><td>${cls}</td><td>${i+1}</td><td>${escapeHtml(s.name)}</td></tr>`;
   }).join('');
 }
 
