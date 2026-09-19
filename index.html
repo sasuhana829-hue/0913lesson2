@@ -274,10 +274,9 @@
     word-break: keep-all;
   }
   .seat.empty{ color:#c9c0a8; font-weight:400; font-size:0.72rem; cursor:default; }
+  .seat-id{ font-size:0.68rem; font-weight:400; color: var(--ink-soft); }
   .seat.selected{ border-color: var(--board); background: #dfeae4; }
   .seat.conflict{ background: var(--warn-soft); color: var(--warn); }
-  .seat.pref-front{ box-shadow: inset 0 -3px 0 var(--window); }
-  .seat.pref-back{ box-shadow: inset 0 -3px 0 var(--corridor); }
 
   .legend{
     display:flex; gap:14px; flex-wrap:wrap;
@@ -294,6 +293,28 @@
     .app-header h1{ font-size:1.3rem; }
     body{ background:#fff; }
     .seat.conflict{ background: var(--paper); color: var(--ink); }
+    .print-only{ display:block !important; }
+  }
+  .print-only{ display:none; }
+  .roster-table{
+    width:100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin-top: 8px;
+  }
+  .roster-table th, .roster-table td{
+    border: 1px solid #ccc2a8;
+    padding: 5px 8px;
+    text-align: left;
+  }
+  .roster-table th{
+    background: var(--paper-line);
+  }
+  .roster-title{
+    font-family:'Gaegu', sans-serif;
+    font-size: 1.1rem;
+    color: var(--board);
+    margin: 26px 0 6px;
   }
 
   .pw-overlay{
@@ -402,9 +423,15 @@
       <div id="podiumBottom" class="podium" style="display:none;">교 탁</div>
     </div>
 
+    <div class="print-only">
+      <div class="roster-title">학생 명렬표</div>
+      <table class="roster-table">
+        <thead><tr><th style="width:80px;">번호</th><th>이름</th><th>배정 좌석</th></tr></thead>
+        <tbody id="rosterBody"></tbody>
+      </table>
+    </div>
+
     <div class="legend">
-      <span><span class="dot" style="background:var(--window)"></span>앞자리 선호 학생</span>
-      <span><span class="dot" style="background:var(--corridor)"></span>뒷자리 선호 학생</span>
       <span><span class="dot" style="background:var(--warn)"></span>기피 조건이 충돌한 자리</span>
       <span>💡 자리 두 곳을 순서대로 클릭하면 서로 자리를 바꿀 수 있어요</span>
     </div>
@@ -425,12 +452,31 @@
 
 <script>
 // ---------- state ----------
-let students = [];       // {id, name, pref: 'front'|'back'|'none'}
+// ---------- preset roster (auto-loaded) ----------
+const INITIAL_ROSTER = [
+  [10501,'강수혁'],[10502,'권정후'],[10503,'김남경'],[10504,'김세은'],
+  [10505,'김연주'],[10506,'김정화'],[10507,'김지담'],[10508,'남윤성'],
+  [10509,'남윤호'],[10510,'박건우'],[10511,'박성주'],[10512,'박시연'],
+  [10513,'박시우'],[10514,'방서정'],[10515,'배소은'],[10516,'백경인'],
+  [10517,'봉은솔'],[10518,'서성원'],[10519,'심준표'],[10520,'안서윤'],
+  [10521,'안시연'],[10522,'우동현'],[10523,'우아인'],[10524,'유시우'],
+  [10525,'이아영'],[10526,'이영은'],[10527,'이은호'],[10528,'이주호'],
+  [10529,'이희원'],[10530,'정인아'],[10531,'조예담'],[10532,'홍준우']
+];
+
+// ---------- hidden internal placement rules (never surfaced in any UI) ----------
+// fixed corner seat: front-most row, corridor-side column -> row 0, col 7
+const FIXED_SEAT_STUDENT_ID = 10523;
+const FIXED_SEAT = [0,7];
+const NEAR_FIXED_SEAT = [[0,6],[1,7],[1,6]]; // partner seat + directly behind + diagonal
+const KEEP_AWAY_IDS = [10501, 10511, 10513, 10506, 10524];
+
+let students = INITIAL_ROSTER.map(([id,name]) => ({ id, name, pref: 'none' }));
 let forbiddenPairs = []; // [id1, id2]
 let seats = Array.from({length:4}, () => Array(8).fill(null)); // seats[row][col] = studentId, row0 = nearest podium, col0 = window side
 let mode = 'screen';     // 'screen' | 'print'
 let selectedSeat = null; // {row, col}
-let nextId = 1;
+let nextId = 10533;
 
 // ---------- student management ----------
 function addStudent(){
@@ -512,9 +558,10 @@ function renderStudentList(){
   if(students.length === 0){
     list.innerHTML = '<div class="empty-note">등록된 학생이 없습니다. 이름을 입력해 추가해 주세요.</div>';
   } else {
-    list.innerHTML = students.map(s => `
+    const sorted = students.slice().sort((a,b) => a.id - b.id);
+    list.innerHTML = sorted.map(s => `
       <div class="student-row">
-        <span class="name">${escapeHtml(s.name)}</span>
+        <span class="name">${s.id} ${escapeHtml(s.name)}</span>
         <select class="pref-select" onchange="updateStudentPref(${s.id}, this.value)">
           <option value="none" ${s.pref==='none'?'selected':''}>선호 없음</option>
           <option value="front" ${s.pref==='front'?'selected':''}>앞자리 선호</option>
@@ -632,6 +679,11 @@ function countConflicts(grid){
       if(a && b && forbiddenPairs.some(p => (p[0]===a&&p[1]===b)||(p[0]===b&&p[1]===a))) n++;
     }
   }
+  // hidden proximity rule (never shown in any UI)
+  NEAR_FIXED_SEAT.forEach(([r,c]) => {
+    const occ = grid[r][c];
+    if(occ && KEEP_AWAY_IDS.includes(occ)) n++;
+  });
   return n;
 }
 
@@ -640,16 +692,27 @@ function buildAttempt(){
   const midSeats = []; for(let c=0;c<8;c++) midSeats.push([2,c]);
   const backSeats = []; for(let c=0;c<8;c++) backSeats.push([3,c]);
 
-  const frontPref = shuffle(students.filter(s=>s.pref==='front').map(s=>s.id));
-  const backPref  = shuffle(students.filter(s=>s.pref==='back').map(s=>s.id));
-  const none      = shuffle(students.filter(s=>s.pref==='none').map(s=>s.id));
-
   const grid = Array.from({length:4}, () => Array(8).fill(null));
-  let overflow = [];
 
-  // place front-preferring students into front seats (cap 16)
-  const frontPlaced = frontPref.slice(0,16);
-  overflow = overflow.concat(frontPref.slice(16));
+  // hidden rule: reserve the fixed corner seat first, before any other placement
+  const hasFixedStudent = students.some(s => s.id === FIXED_SEAT_STUDENT_ID);
+  if(hasFixedStudent){
+    grid[FIXED_SEAT[0]][FIXED_SEAT[1]] = FIXED_SEAT_STUDENT_ID;
+    const idx = frontSeats.findIndex(([r,c]) => r===FIXED_SEAT[0] && c===FIXED_SEAT[1]);
+    if(idx !== -1){ frontSeats.splice(idx,1); }
+  }
+
+  const pool = students.filter(s => s.id !== FIXED_SEAT_STUDENT_ID);
+  const frontPref = shuffle(pool.filter(s=>s.pref==='front').map(s=>s.id));
+  const backPref  = shuffle(pool.filter(s=>s.pref==='back').map(s=>s.id));
+  const none      = shuffle(pool.filter(s=>s.pref==='none').map(s=>s.id));
+
+  let overflow = [];
+  const frontCap = 16 - (hasFixedStudent ? 1 : 0);
+
+  // place front-preferring students into front seats
+  const frontPlaced = frontPref.slice(0,frontCap);
+  overflow = overflow.concat(frontPref.slice(frontCap));
   const frontShuffledSeats = shuffle(frontSeats);
   frontPlaced.forEach((id,i) => { const [r,c]=frontShuffledSeats[i]; grid[r][c]=id; });
   const leftoverFrontSeats = frontShuffledSeats.slice(frontPlaced.length);
@@ -699,6 +762,7 @@ function randomizeSeats(){
 function studentById(id){ return students.find(s=>s.id===id); }
 
 function renderSeatGrid(){
+  renderRoster();
   const rowsOrder = mode === 'screen' ? [0,1,2,3] : [3,2,1,0];
   const colsOrder = mode === 'screen' ? [0,1,2,3,4,5,6,7] : [7,6,5,4,3,2,1,0];
 
@@ -732,13 +796,11 @@ function seatCellHtml(r, c){
   const student = id ? studentById(id) : null;
   const isConflict = id ? checkSeatConflict(r,c) : false;
   const isSelected = selectedSeat && selectedSeat.row===r && selectedSeat.col===c;
-  const prefClass = student ? (student.pref==='front' ? 'pref-front' : student.pref==='back' ? 'pref-back' : '') : '';
   const classes = ['seat'];
   if(!student) classes.push('empty');
   if(isConflict) classes.push('conflict');
   if(isSelected) classes.push('selected');
-  if(prefClass) classes.push(prefClass);
-  return `<div class="${classes.join(' ')}" onclick="onSeatClick(${r},${c})">${student ? escapeHtml(student.name) : '빈자리'}</div>`;
+  return `<div class="${classes.join(' ')}" onclick="onSeatClick(${r},${c})">${student ? escapeHtml(student.name) + '<br><span class="seat-id">' + student.id + '</span>' : '빈자리'}</div>`;
 }
 
 function checkSeatConflict(r,c){
@@ -750,15 +812,54 @@ function checkSeatConflict(r,c){
   return forbiddenPairs.some(p => (p[0]===a&&p[1]===b)||(p[0]===b&&p[1]===a));
 }
 
+function isSwapAllowed(r1,c1,r2,c2){
+  const idAt1 = seats[r1][c1];
+  const idAt2 = seats[r2][c2];
+  const isFixedSeat = (r,c) => r===FIXED_SEAT[0] && c===FIXED_SEAT[1];
+  const isNearSeat = (r,c) => NEAR_FIXED_SEAT.some(([nr,nc]) => nr===r && nc===c);
+
+  // the fixed-seat student may never be moved off her seat
+  if(idAt1===FIXED_SEAT_STUDENT_ID && !isFixedSeat(r2,c2)) return false;
+  if(idAt2===FIXED_SEAT_STUDENT_ID && !isFixedSeat(r1,c1)) return false;
+  // only the fixed-seat student may occupy the fixed seat
+  if(isFixedSeat(r1,c1) && idAt2 && idAt2!==FIXED_SEAT_STUDENT_ID) return false;
+  if(isFixedSeat(r2,c2) && idAt1 && idAt1!==FIXED_SEAT_STUDENT_ID) return false;
+  // keep-away students may never land in a seat adjacent to the fixed seat
+  if(isNearSeat(r1,c1) && idAt2 && KEEP_AWAY_IDS.includes(idAt2)) return false;
+  if(isNearSeat(r2,c2) && idAt1 && KEEP_AWAY_IDS.includes(idAt1)) return false;
+  return true;
+}
+
+function findSeatOf(studentId){
+  for(let r=0;r<4;r++){
+    for(let c=0;c<8;c++){
+      if(seats[r][c] === studentId){ return {r,c}; }
+    }
+  }
+  return null;
+}
+
+function renderRoster(){
+  const body = document.getElementById('rosterBody');
+  const sorted = students.slice().sort((a,b) => a.id - b.id);
+  body.innerHTML = sorted.map(s => {
+    const pos = findSeatOf(s.id);
+    const seatText = pos ? `앞에서 ${pos.r+1}번째 줄 · 창가에서 ${pos.c+1}번째 자리` : '미배정';
+    return `<tr><td>${s.id}</td><td>${escapeHtml(s.name)}</td><td>${seatText}</td></tr>`;
+  }).join('');
+}
+
 function onSeatClick(r,c){
   if(!selectedSeat){
     selectedSeat = {row:r, col:c};
   } else if(selectedSeat.row===r && selectedSeat.col===c){
     selectedSeat = null;
   } else {
-    const tmp = seats[r][c];
-    seats[r][c] = seats[selectedSeat.row][selectedSeat.col];
-    seats[selectedSeat.row][selectedSeat.col] = tmp;
+    if(isSwapAllowed(selectedSeat.row, selectedSeat.col, r, c)){
+      const tmp = seats[r][c];
+      seats[r][c] = seats[selectedSeat.row][selectedSeat.col];
+      seats[selectedSeat.row][selectedSeat.col] = tmp;
+    }
     selectedSeat = null;
   }
   renderSeatGrid();
