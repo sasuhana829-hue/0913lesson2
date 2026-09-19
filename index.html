@@ -444,11 +444,18 @@ const INITIAL_ROSTER = [
 ];
 
 // ---------- hidden internal placement rules (never surfaced in any UI) ----------
-// fixed corner seat: front-most row, corridor-side column -> row 0, col 7
-const FIXED_SEAT_STUDENT_ID = 10523;
-const FIXED_SEAT = [0,7];
+// fixed corner seat for 10523: front-most row, corridor-side column -> row 0, col 7
+const FIXED_ASSIGNMENTS = {
+  10523: [0,7]
+};
+const FIXED_SEAT = FIXED_ASSIGNMENTS[10523];
 const NEAR_FIXED_SEAT = [[0,6],[1,7],[1,6]]; // partner seat + directly behind + diagonal
 const KEEP_AWAY_IDS = [10501, 10511, 10513, 10506, 10524, 10514];
+// 10501, 10513 always land in the two seats furthest from 10523's corner (opposite corner,
+// different pair-groups so they're never deskmates with her or each other) - which of the
+// two of them gets which of the two seats is re-shuffled on every randomization
+const FAR_PAIR_IDS = [10501, 10513];
+const FAR_PAIR_SEATS = [[3,0],[2,0]];
 
 let students = INITIAL_ROSTER.map(([id,name]) => ({ id, name, pref: 'none' }));
 let forbiddenPairs = []; // [id1, id2]
@@ -673,21 +680,39 @@ function buildAttempt(){
 
   const grid = Array.from({length:4}, () => Array(8).fill(null));
 
-  // hidden rule: reserve the fixed corner seat first, before any other placement
-  const hasFixedStudent = students.some(s => s.id === FIXED_SEAT_STUDENT_ID);
-  if(hasFixedStudent){
-    grid[FIXED_SEAT[0]][FIXED_SEAT[1]] = FIXED_SEAT_STUDENT_ID;
-    const idx = frontSeats.findIndex(([r,c]) => r===FIXED_SEAT[0] && c===FIXED_SEAT[1]);
-    if(idx !== -1){ frontSeats.splice(idx,1); }
-  }
+  // hidden rule: reserve every fixed seat first, before any other placement
+  const fixedIds = Object.keys(FIXED_ASSIGNMENTS)
+    .map(Number)
+    .filter(id => students.some(s => s.id === id));
+  fixedIds.forEach(id => {
+    const [r,c] = FIXED_ASSIGNMENTS[id];
+    grid[r][c] = id;
+    [frontSeats, midSeats, backSeats].forEach(arr => {
+      const idx = arr.findIndex(([rr,cc]) => rr===r && cc===c);
+      if(idx !== -1){ arr.splice(idx,1); }
+    });
+  });
 
-  const pool = students.filter(s => s.id !== FIXED_SEAT_STUDENT_ID);
+  // hidden rule: seat the far-pair students, alternating which of them gets which far seat
+  const presentFarIds = FAR_PAIR_IDS.filter(id => students.some(s => s.id === id));
+  const shuffledFarIds = shuffle(presentFarIds);
+  shuffledFarIds.forEach((id, i) => {
+    const [r,c] = FAR_PAIR_SEATS[i];
+    grid[r][c] = id;
+    [frontSeats, midSeats, backSeats].forEach(arr => {
+      const idx = arr.findIndex(([rr,cc]) => rr===r && cc===c);
+      if(idx !== -1){ arr.splice(idx,1); }
+    });
+  });
+
+  const pool = students.filter(s => !fixedIds.includes(s.id) && !presentFarIds.includes(s.id));
   const frontPref = shuffle(pool.filter(s=>s.pref==='front').map(s=>s.id));
   const backPref  = shuffle(pool.filter(s=>s.pref==='back').map(s=>s.id));
   const none      = shuffle(pool.filter(s=>s.pref==='none').map(s=>s.id));
 
   let overflow = [];
-  const frontCap = 16 - (hasFixedStudent ? 1 : 0);
+  const frontCap = frontSeats.length;
+  const backCap = backSeats.length;
 
   // place front-preferring students into front seats
   const frontPlaced = frontPref.slice(0,frontCap);
@@ -696,9 +721,9 @@ function buildAttempt(){
   frontPlaced.forEach((id,i) => { const [r,c]=frontShuffledSeats[i]; grid[r][c]=id; });
   const leftoverFrontSeats = frontShuffledSeats.slice(frontPlaced.length);
 
-  // place back-preferring students into back seats (cap 8)
-  const backPlaced = backPref.slice(0,8);
-  overflow = overflow.concat(backPref.slice(8));
+  // place back-preferring students into back seats
+  const backPlaced = backPref.slice(0,backCap);
+  overflow = overflow.concat(backPref.slice(backCap));
   const backShuffledSeats = shuffle(backSeats);
   backPlaced.forEach((id,i) => { const [r,c]=backShuffledSeats[i]; grid[r][c]=id; });
   const leftoverBackSeats = backShuffledSeats.slice(backPlaced.length);
@@ -793,15 +818,23 @@ function checkSeatConflict(r,c){
 function isSwapAllowed(r1,c1,r2,c2){
   const idAt1 = seats[r1][c1];
   const idAt2 = seats[r2][c2];
-  const isFixedSeat = (r,c) => r===FIXED_SEAT[0] && c===FIXED_SEAT[1];
+  const ownerOfSeat = (r,c) => {
+    for(const idStr in FIXED_ASSIGNMENTS){
+      const [fr,fc] = FIXED_ASSIGNMENTS[idStr];
+      if(fr===r && fc===c){ return Number(idStr); }
+    }
+    return null;
+  };
   const isNearSeat = (r,c) => NEAR_FIXED_SEAT.some(([nr,nc]) => nr===r && nc===c);
 
-  // the fixed-seat student may never be moved off her seat
-  if(idAt1===FIXED_SEAT_STUDENT_ID && !isFixedSeat(r2,c2)) return false;
-  if(idAt2===FIXED_SEAT_STUDENT_ID && !isFixedSeat(r1,c1)) return false;
-  // only the fixed-seat student may occupy the fixed seat
-  if(isFixedSeat(r1,c1) && idAt2 && idAt2!==FIXED_SEAT_STUDENT_ID) return false;
-  if(isFixedSeat(r2,c2) && idAt1 && idAt1!==FIXED_SEAT_STUDENT_ID) return false;
+  // any student with a hidden fixed seat may never be moved off it
+  if(FIXED_ASSIGNMENTS[idAt1] !== undefined) return false;
+  if(FIXED_ASSIGNMENTS[idAt2] !== undefined) return false;
+  // a hidden fixed seat may only ever be occupied by its assigned student
+  const owner1 = ownerOfSeat(r1,c1);
+  const owner2 = ownerOfSeat(r2,c2);
+  if(owner1 !== null && idAt2 !== owner1) return false;
+  if(owner2 !== null && idAt1 !== owner2) return false;
   // keep-away students may never land in a seat adjacent to the fixed seat
   if(isNearSeat(r1,c1) && idAt2 && KEEP_AWAY_IDS.includes(idAt2)) return false;
   if(isNearSeat(r2,c2) && idAt1 && KEEP_AWAY_IDS.includes(idAt1)) return false;
