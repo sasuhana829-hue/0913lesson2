@@ -451,11 +451,10 @@ const FIXED_ASSIGNMENTS = {
 const FIXED_SEAT = FIXED_ASSIGNMENTS[10523];
 const NEAR_FIXED_SEAT = [[0,6],[1,7],[1,6]]; // partner seat + directly behind + diagonal
 const KEEP_AWAY_IDS = [10501, 10511, 10513, 10506, 10524, 10514];
-// 10501, 10513 always land in the two seats furthest from 10523's corner (opposite corner,
-// different pair-groups so they're never deskmates with her or each other) - which of the
-// two of them gets which of the two seats is re-shuffled on every randomization
+// 10501, 10513 are seated at random inside the 3rd and 4th 분단 (counted from the left of the
+// student-facing screen view, i.e. the window-side half = logical cols 0..3), never as deskmates
 const FAR_PAIR_IDS = [10501, 10513];
-const FAR_PAIR_SEATS = [[3,0],[2,0]];
+const FAR_PAIR_COLS = [0,1,2,3];
 
 let students = INITIAL_ROSTER.map(([id,name]) => ({ id, name, pref: 'none' }));
 let forbiddenPairs = []; // [id1, id2]
@@ -693,12 +692,22 @@ function buildAttempt(){
     });
   });
 
-  // hidden rule: seat the far-pair students, alternating which of them gets which far seat
+  // hidden rule: seat the far-pair students at random within the 3rd/4th 분단, never as deskmates
   const presentFarIds = FAR_PAIR_IDS.filter(id => students.some(s => s.id === id));
-  const shuffledFarIds = shuffle(presentFarIds);
-  shuffledFarIds.forEach((id, i) => {
-    const [r,c] = FAR_PAIR_SEATS[i];
+  const takenFar = [];
+  presentFarIds.forEach(id => {
+    const candidates = [];
+    for(let r=0;r<4;r++){
+      FAR_PAIR_COLS.forEach(c => {
+        if(grid[r][c] !== null) return;
+        // skip the deskmate seat of an already-placed far-pair student
+        if(takenFar.some(([tr,tc]) => tr===r && Math.floor(tc/2)===Math.floor(c/2))) return;
+        candidates.push([r,c]);
+      });
+    }
+    const [r,c] = candidates[Math.floor(Math.random()*candidates.length)];
     grid[r][c] = id;
+    takenFar.push([r,c]);
     [frontSeats, midSeats, backSeats].forEach(arr => {
       const idx = arr.findIndex(([rr,cc]) => rr===r && cc===c);
       if(idx !== -1){ arr.splice(idx,1); }
@@ -835,6 +844,15 @@ function isSwapAllowed(r1,c1,r2,c2){
   const owner2 = ownerOfSeat(r2,c2);
   if(owner1 !== null && idAt2 !== owner1) return false;
   if(owner2 !== null && idAt1 !== owner2) return false;
+  // far-pair students must stay in the 3rd/4th 분단 and never become deskmates with each other
+  const farOk = (id, r, c) => {
+    if(!FAR_PAIR_IDS.includes(id)) return true;
+    if(!FAR_PAIR_COLS.includes(c)) return false;
+    const mateCol = c % 2 === 0 ? c+1 : c-1;
+    const mate = (r===r1 && mateCol===c1) ? idAt2 : (r===r2 && mateCol===c2) ? idAt1 : seats[r][mateCol];
+    return !(mate && FAR_PAIR_IDS.includes(mate) && mate !== id);
+  };
+  if(!farOk(idAt1, r2, c2) || !farOk(idAt2, r1, c1)) return false;
   // keep-away students may never land in a seat adjacent to the fixed seat
   if(isNearSeat(r1,c1) && idAt2 && KEEP_AWAY_IDS.includes(idAt2)) return false;
   if(isNearSeat(r2,c2) && idAt1 && KEEP_AWAY_IDS.includes(idAt1)) return false;
